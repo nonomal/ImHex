@@ -1713,7 +1713,6 @@ void ImDrawList::AddText(ImFont* font, float font_size, const ImVec2& pos, ImU32
         font_size = _Data->FontSize;
 
     IM_ASSERT(font->ContainerAtlas->TexID == _CmdHeader.TextureId);  // Use high-level ImGui::PushFont() or low-level ImDrawList::PushTextureId() to change font.
-
     ImVec4 clip_rect = _CmdHeader.ClipRect;
     if (cpu_fine_clip_rect)
     {
@@ -1722,7 +1721,30 @@ void ImDrawList::AddText(ImFont* font, float font_size, const ImVec2& pos, ImU32
         clip_rect.z = ImMin(clip_rect.z, cpu_fine_clip_rect->z);
         clip_rect.w = ImMin(clip_rect.w, cpu_fine_clip_rect->w);
     }
+
+    // IMHEX PATCH BEGIN
+    int flags;
+    bool is_subpixel = false;
+    if (font != nullptr && font->ContainerAtlas != nullptr) {
+        flags = font->ContainerAtlas->FontBuilderFlags;
+        is_subpixel = (flags & ImGuiFreeTypeBuilderFlags_SubPixel) != 0;
+    }
+
+    void ImGui_ImplOpenGL3_TurnFontShadersOn(const ImDrawList *parent_list, const ImDrawCmd *cmd);
+    void ImGui_ImplOpenGL3_TurnFontShadersOff(const ImDrawList *parent_list, const ImDrawCmd *cmd);
+
+    if (is_subpixel) {
+        AddCallback(ImGui_ImplOpenGL3_TurnFontShadersOn, NULL);
+        AddCallback(ImDrawCallback_ResetRenderState, NULL);
+    }
+
     font->RenderText(this, font_size, pos, col, clip_rect, text_begin, text_end, wrap_width, cpu_fine_clip_rect != NULL);
+
+    if (is_subpixel) {
+        AddCallback(ImGui_ImplOpenGL3_TurnFontShadersOff, NULL);
+        AddCallback(ImDrawCallback_ResetRenderState, NULL);
+    }
+    // IMHEX PATCH END
 }
 
 void ImDrawList::AddText(const ImVec2& pos, ImU32 col, const char* text_begin, const char* text_end)
