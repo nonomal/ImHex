@@ -345,6 +345,9 @@ jobs:
         restore-keys: ${{ runner.os }}${{ matrix.suffix }}-ccache
         max-size: 1G
 
+    - name: Set Xcode version
+      run: sudo xcode-select -s /Library/Developer/CommandLineTools
+
     - name: ⬇️ Install dependencies
       env:
         # Make brew not display useless errors
@@ -598,6 +601,7 @@ jobs:
         include:
           - release_num: "24.04"
           - release_num: "24.10"
+          - release_num: "25.04"
 
     name: 🐧 Ubuntu ${{ matrix.release_num }}
     runs-on: ubuntu-24.04
@@ -875,13 +879,13 @@ jobs:
             release_num: rawhide
             mock_config: fedora-rawhide
           - name: Fedora
+            mock_release: f42
+            release_num: 42
+            mock_config: fedora-42
+          - name: Fedora
             mock_release: f41
             release_num: 41
             mock_config: fedora-41
-          - name: Fedora
-            mock_release: f40
-            release_num: 40
-            mock_config: fedora-40
           - name: RHEL-AlmaLinux
             mock_release: epel9
             release_num: 9
@@ -1011,6 +1015,7 @@ jobs:
   webassembly-build:
     runs-on: ubuntu-24.04
     name: 🌍 Web
+    if: false
     permissions:
       pages: write
       id-token: write
@@ -1035,10 +1040,18 @@ jobs:
 
       - name: 🛠️ Build using docker
         run: |
-          docker buildx build . -f dist/web/Dockerfile --progress=plain --build-arg 'JOBS=4' --output out --target raw
+          mkdir -p out/nightly
+          docker buildx build . -f dist/web/Dockerfile --progress=plain --build-arg 'JOBS=4' --output out/nightly --target raw
+
+      - name: ⬇️ Download Release
+        uses: robinraju/release-downloader@v1
+        with:
+          latest: true
+          fileName: 'imhex-*-Web.zip'
 
       - name: 🔨 Fix permissions
         run: |
+          unzip imhex-*-Web.zip -d out
           chmod -c -R +rX "out/"
 
       - name: ⬆️ Upload artifacts
@@ -1048,14 +1061,14 @@ jobs:
 
       - name: 🔨 Copy necessary files
         run: |
-          cp dist/web/serve.py out/start_imhex_web.py
+          cp dist/web/serve.py out/nightly/start_imhex_web.py
 
       - name: ⬆️ Upload package
         uses: actions/upload-artifact@v4
         with:
           if-no-files-found: error
           name: ImHex Web
-          path: out/*
+          path: out/nightly/*
 
         # See https://github.com/actions/cache/issues/342#issuecomment-1711054115
       - name: 🗑️ Delete old cache
