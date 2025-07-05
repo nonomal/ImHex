@@ -39,6 +39,10 @@
 #include <implot3d_internal.h>
 #include <imnodes.h>
 #include <imnodes_internal.h>
+#if defined(IMGUI_TEST_ENGINE)
+    #include <imgui_te_engine.h>
+    #include <imgui_te_ui.h>
+#endif
 
 #include <wolv/utils/string.hpp>
 
@@ -329,6 +333,11 @@ namespace hex {
             // Unlock frame rate if there's more than one viewport since these don't call the glfw callbacks registered here
             if (ImGui::GetPlatformIO().Viewports.size() > 1)
                 this->unlockFrameRate();
+
+            // Unlock frame rate if there's any task running that shows a loading animation
+            if (TaskManager::getRunningTaskCount() > 0 || TaskManager::getRunningBlockingTaskCount() > 0) {
+                this->unlockFrameRate();
+            }
         }
 
         // Hide the window as soon as the render loop exits to make the window
@@ -354,7 +363,14 @@ namespace hex {
 
                 currentFont = font->ContainerAtlas;
                 ImGui_ImplOpenGL3_CreateFontsTexture();
-                currentFont->ClearInputData();
+
+                for (ImFontConfig& fontCfg : font->ContainerAtlas->Sources) {
+                    if (fontCfg.FontData && fontCfg.FontDataOwnedByAtlas) {
+                        IM_FREE(fontCfg.FontData);
+                        fontCfg.FontData = NULL;
+                    }
+                }
+
                 currentFont->ClearTexData();
             }
 
@@ -370,7 +386,14 @@ namespace hex {
                     cfg.SizePixels = ImHexApi::Fonts::DefaultFontSize;
                     font = io.Fonts->AddFontDefault(&cfg);
                     ImGui_ImplOpenGL3_CreateFontsTexture();
-                    io.Fonts->ClearInputData();
+
+                    for (ImFontConfig& fontCfg : font->ContainerAtlas->Sources) {
+                        if (fontCfg.FontData && fontCfg.FontDataOwnedByAtlas) {
+                            IM_FREE(fontCfg.FontData);
+                            fontCfg.FontData = NULL;
+                        }
+                    }
+
                     io.Fonts->ClearTexData();
                 } else {
                     currentFont = font->ContainerAtlas;
@@ -383,6 +406,12 @@ namespace hex {
         // Start new ImGui Frame
 
         ImGui::NewFrame();
+
+        #if defined(IMGUI_TEST_ENGINE)
+            if (ImGuiExt::ImGuiTestEngine::isEnabled())
+                ImGuiTestEngine_ShowTestEngineWindows(m_testEngine, nullptr);
+        #endif
+
 
         TutorialManager::drawTutorial();
 
@@ -838,6 +867,10 @@ namespace hex {
             glfwSwapBuffers(m_window);
         }
 
+        #if defined(IMGUI_TEST_ENGINE)
+            ImGuiTestEngine_PostSwap(m_testEngine);
+        #endif
+
         // Process layout load requests
         // NOTE: This needs to be done before a new frame is started, otherwise ImGui won't handle docking correctly
         LayoutManager::process();
@@ -980,9 +1013,22 @@ namespace hex {
             glfwWindowHint(GLFW_MAXIMIZED, initialWindowProperties->maximized);
         }
 
+        int monitorX = 0, monitorY = 0;
+        int monitorWidth = std::numeric_limits<int>::max(), monitorHeight = std::numeric_limits<int>::max();
+        GLFWmonitor *monitor = glfwGetPrimaryMonitor();
+        if (monitor != nullptr) {
+            const GLFWvidmode *mode = glfwGetVideoMode(monitor);
+            if (mode != nullptr) {
+                glfwGetMonitorPos(monitor, &monitorX, &monitorY);
+
+                monitorWidth = mode->width;
+                monitorHeight = mode->height;
+            }
+        }
+
         // Create window
         m_windowTitle = "ImHex";
-        m_window      = glfwCreateWindow(1280_scaled, 720_scaled, m_windowTitle.c_str(), nullptr, nullptr);
+        m_window      = glfwCreateWindow(std::min(1280_scaled, monitorWidth - 50_scaled), std::min(720_scaled, monitorHeight - 50_scaled), m_windowTitle.c_str(), nullptr, nullptr);
 
         ImHexApi::System::impl::setMainWindowHandle(m_window);
 
@@ -1002,18 +1048,11 @@ namespace hex {
         glfwSwapInterval(0);
 
         // Center window
-        GLFWmonitor *monitor = glfwGetPrimaryMonitor();
-        if (monitor != nullptr) {
-            const GLFWvidmode *mode = glfwGetVideoMode(monitor);
-            if (mode != nullptr) {
-                int monitorX, monitorY;
-                glfwGetMonitorPos(monitor, &monitorX, &monitorY);
+        if (monitorWidth != std::numeric_limits<int>::max() && monitorHeight != std::numeric_limits<int>::max()) {
+            int windowWidth, windowHeight;
+            glfwGetWindowSize(m_window, &windowWidth, &windowHeight);
 
-                int windowWidth, windowHeight;
-                glfwGetWindowSize(m_window, &windowWidth, &windowHeight);
-
-                glfwSetWindowPos(m_window, monitorX + (mode->width - windowWidth) / 2, monitorY + (mode->height - windowHeight) / 2);
-            }
+            glfwSetWindowPos(m_window, monitorX + (monitorWidth - windowWidth) / 2, monitorY + (monitorHeight - windowHeight) / 2);
         }
 
         // Set up initial window position
@@ -1034,6 +1073,9 @@ namespace hex {
         {
             int width = 0, height = 0;
             glfwGetWindowSize(m_window, &width, &height);
+
+            width  = std::min(width,  monitorWidth  - int(50_scaled));
+            height = std::min(height, monitorHeight - int(100_scaled));
 
             if (initialWindowProperties.has_value()) {
                 width  = initialWindowProperties->width;
@@ -1254,6 +1296,17 @@ namespace hex {
         ImPlot3D::GImPlot3D = ImPlot3D::CreateContext();
         GImNodes            = ImNodes::CreateContext();
 
+        #if defined(IMGUI_TEST_ENGINE)
+            m_testEngine = ImGuiTestEngine_CreateContext();
+            auto testEngineIo = ImGuiTestEngine_GetIO(m_testEngine);
+            testEngineIo.ConfigVerboseLevel = ImGuiTestVerboseLevel_Info;
+            testEngineIo.ConfigVerboseLevelOnError = ImGuiTestVerboseLevel_Debug;
+
+            EventRegisterImGuiTests::post(m_testEngine);
+
+            ImGuiTestEngine_Start(m_testEngine, ImGui::GetCurrentContext());
+        #endif
+
         ImGuiIO &io       = ImGui::GetIO();
         ImGuiStyle &style = ImGui::GetStyle();
 
@@ -1330,7 +1383,7 @@ namespace hex {
             ImGui_ImplOpenGL3_Init();
             ImGui_ImplGlfw_InstallEmscriptenCallbacks(m_window, "#canvas");
         #else
-            ImGui_ImplOpenGL3_Init("#version 130");
+            ImGui_ImplOpenGL3_Init("#version 410");
         #endif
 
         ImGui_ImplGlfw_SetCallbacksChainForAllWindows(true);

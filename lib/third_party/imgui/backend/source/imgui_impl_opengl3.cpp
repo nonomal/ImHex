@@ -419,6 +419,16 @@ void    ImGui_ImplOpenGL3_NewFrame()
         ImGui_ImplOpenGL3_CreateDeviceObjects();
 }
 
+// IMHEX PATCH BEGIN
+static bool useFontShaders = false;
+void ImGui_ImplOpenGL3_TurnFontShadersOn(const ImDrawList *parent_list, const ImDrawCmd *cmd) {
+    useFontShaders = true;
+}
+void ImGui_ImplOpenGL3_TurnFontShadersOff(const ImDrawList *parent_list, const ImDrawCmd *cmd) {
+    useFontShaders = false;
+}
+// IMHEX PATCH END
+
 static void ImGui_ImplOpenGL3_SetupRenderState(ImDrawData* draw_data, int fb_width, int fb_height, GLuint vertex_array_object)
 {
     ImGui_ImplOpenGL3_Data* bd = ImGui_ImplOpenGL3_GetBackendData();
@@ -426,7 +436,19 @@ static void ImGui_ImplOpenGL3_SetupRenderState(ImDrawData* draw_data, int fb_wid
     // Setup render state: alpha-blending enabled, no face culling, no depth testing, scissor enabled, polygon fill
     glEnable(GL_BLEND);
     glBlendEquation(GL_FUNC_ADD);
+    // IMHEX PATCH BEGIN
+#if !defined(__EMSCRIPTEN__)
+    if (useFontShaders) {
+        glBlendFuncSeparate(GL_SRC1_COLOR, GL_ONE_MINUS_SRC1_COLOR,GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    } else {
+        glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    }
+#else
+    // IMHEX PATCH END
     glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    // IMHEX PATCH BEGIN
+#endif
+    // IMHEX PATCH END
     glDisable(GL_CULL_FACE);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_STENCIL_TEST);
@@ -461,9 +483,18 @@ static void ImGui_ImplOpenGL3_SetupRenderState(ImDrawData* draw_data, int fb_wid
 #if defined(GL_CLIP_ORIGIN)
     if (!clip_origin_lower_left) { float tmp = T; T = B; B = tmp; } // Swap top and bottom if origin is upper left
 #endif
+// IMHEX PATCH BEGIN
+    float Gamma;
+    if (useFontShaders)
+        Gamma = 1.0f;
+    else
+        Gamma = 0.0f;
+// IMHEX PATCH END
     const float ortho_projection[4][4] =
     {
-        { 2.0f/(R-L),   0.0f,         0.0f,   0.0f },
+        // IMHEX PATCH BEGIN
+        { 2.0f/(R-L),   0.0f,        Gamma,   0.0f },
+        // IMHEX PATCH END
         { 0.0f,         2.0f/(T-B),   0.0f,   0.0f },
         { 0.0f,         0.0f,        -1.0f,   0.0f },
         { (R+L)/(L-R),  (T+B)/(B-T),  0.0f,   1.0f },
@@ -827,11 +858,21 @@ bool    ImGui_ImplOpenGL3_CreateDeviceObjects()
         "uniform mat4 ProjMtx;\n"
         "out vec2 Frag_UV;\n"
         "out vec4 Frag_Color;\n"
+        // IMHEX PATCH BEGIN
+        "out mat4 Frag_mat;\n"
+        // IMHEX PATCH END
         "void main()\n"
         "{\n"
         "    Frag_UV = UV;\n"
+        // IMHEX PATCH BEGIN
+        "    mat4 projMtx = ProjMtx;\n"
+        "    projMtx[0][2] = 0.0;\n"
+        "    Frag_mat = ProjMtx;\n"
         "    Frag_Color = Color;\n"
-        "    gl_Position = ProjMtx * vec4(Position.xy,0,1);\n"
+        "    gl_Position = projMtx * vec4(Position.xy,0,1);\n"
+      //"    Frag_Color = Color;\n"
+     // "    gl_Position = ProjMtx * vec4(Position.xy,0,1);\n"
+        // IMHEX PATCH END
         "}\n";
 
     const GLchar* fragment_shader_glsl_120 =
@@ -870,11 +911,27 @@ bool    ImGui_ImplOpenGL3_CreateDeviceObjects()
     const GLchar* fragment_shader_glsl_410_core =
         "in vec2 Frag_UV;\n"
         "in vec4 Frag_Color;\n"
+        // IMHEX PATCH BEGIN
+        "in mat4 Frag_mat;\n"
+        // IMHEX PATCH END
         "uniform sampler2D Texture;\n"
         "layout (location = 0) out vec4 Out_Color;\n"
+        // IMHEX PATCH BEGIN
+        "layout (location = 0, index = 1) out vec4 SRC1_Color;\n"
+        // IMHEX PATCH END
         "void main()\n"
         "{\n"
-        "    Out_Color = Frag_Color * texture(Texture, Frag_UV.st);\n"
+        // IMHEX PATCH BEGIN
+        "    float Gamma = Frag_mat[0][2];\n"
+        "    if (Gamma <= 0.0001)\n"
+        // IMHEX PATCH END
+        "       Out_Color = Frag_Color * texture(Texture, Frag_UV.st);\n"
+        // IMHEX PATCH BEGIN
+        "    else {\n"
+        "       Out_Color = Frag_Color;\n"
+        "       SRC1_Color = vec4(texture(Texture, Frag_UV.st).rgb * Frag_Color.aaa,1.0);\n"
+        "    }\n"
+            // IMHEX PATCH END
         "}\n";
 
     // Select shaders matching our GLSL versions

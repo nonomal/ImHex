@@ -350,14 +350,10 @@ namespace hex::ui {
     void PatternDrawer::drawValueColumn(pl::ptrn::Pattern& pattern) {
         ImGui::TableNextColumn();
 
-        std::string value;
-        try {
-            value = pattern.getFormattedValue();
-        } catch (const std::exception &e) {
-            value = e.what();
-        }
-
+        const auto value = pattern.getFormattedValue();
+        const bool valueValid = pattern.hasValidFormattedValue();
         const auto width = ImGui::GetColumnWidth();
+
         if (const auto &visualizeArgs = pattern.getAttributeArguments("hex::visualize"); !visualizeArgs.empty()) {
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
             ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0, 0.5F));
@@ -378,7 +374,7 @@ namespace hex::ui {
 
             ImGui::SameLine();
 
-            if (ImGui::BeginPopup("Visualizer")) {
+            if (ImGui::BeginPopupEx(ImGui::GetCurrentWindowRead()->GetID("Visualizer"), ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
                 if (m_currVisualizedPattern == &pattern) {
                     m_visualizerDrawer.drawVisualizer(ContentRegistry::PatternLanguage::impl::getVisualizers(), visualizeArgs, pattern, !m_visualizedPatterns.contains(&pattern) || shouldReset);
                     m_visualizedPatterns.insert(&pattern);
@@ -389,7 +385,9 @@ namespace hex::ui {
         } else if (const auto &inlineVisualizeArgs = pattern.getAttributeArguments("hex::inline_visualize"); !inlineVisualizeArgs.empty()) {
             m_visualizerDrawer.drawVisualizer(ContentRegistry::PatternLanguage::impl::getInlineVisualizers(), inlineVisualizeArgs, pattern, true);
         } else {
+            if (!valueValid) ImGui::PushStyleColor(ImGuiCol_Text, ImGuiExt::GetCustomColorU32(ImGuiCustomCol_LoggerError));
             ImGuiExt::TextFormatted("{}", value);
+            if (!valueValid) ImGui::PopStyleColor();
         }
 
         if (ImGui::CalcTextSize(value.c_str()).x > width) {
@@ -445,9 +443,12 @@ namespace hex::ui {
         ImGui::TableNextColumn();
 
         if (pattern.isSealed() || leaf) {
-            ImGui::Indent();
-            highlightWhenSelected(pattern, [&]{ ImGui::TextUnformatted(this->getDisplayName(pattern).c_str()); });
-            ImGui::Unindent();
+            const float indent = ImGui::GetCurrentContext()->FontSize + ImGui::GetStyle().FramePadding.x * 2;
+            ImGui::Indent(indent);
+            highlightWhenSelected(pattern, [&] {
+                ImGui::TextUnformatted(this->getDisplayName(pattern).c_str());
+            });
+            ImGui::Unindent(indent);
             return false;
         }
 
@@ -455,16 +456,27 @@ namespace hex::ui {
             if (shouldOpen)
                 ImGui::SetNextItemOpen(true, ImGuiCond_Always);
 
+            ImGui::PushStyleVarX(ImGuiStyleVar_FramePadding, 0.0F);
+            bool retVal = false;
             switch (m_treeStyle) {
                 using enum TreeStyle;
                 default:
                 case Default:
-                    return ImGui::TreeNodeEx(this->getDisplayName(pattern).c_str(), ImGuiTreeNodeFlags_SpanFullWidth);
+                    retVal = ImGui::TreeNodeEx("##TreeNode", ImGuiTreeNodeFlags_SpanLabelWidth | ImGuiTreeNodeFlags_OpenOnArrow);
+                    break;
                 case AutoExpanded:
-                    return ImGui::TreeNodeEx(this->getDisplayName(pattern).c_str(), ImGuiTreeNodeFlags_SpanFullWidth | ImGuiTreeNodeFlags_DefaultOpen);
+                    retVal = ImGui::TreeNodeEx("##TreeNode", ImGuiTreeNodeFlags_SpanLabelWidth | ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_OpenOnArrow);
+                    break;
                 case Flattened:
-                    return ImGui::TreeNodeEx(this->getDisplayName(pattern).c_str(), ImGuiTreeNodeFlags_SpanFullWidth | ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
+                    retVal = ImGui::TreeNodeEx("##TreeNode", ImGuiTreeNodeFlags_SpanLabelWidth | ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
+                    break;
             }
+            ImGui::PopStyleVar();
+
+            ImGui::SameLine();
+            ImGui::TextUnformatted(this->getDisplayName(pattern).c_str());
+
+            return retVal;
         });
     }
 
@@ -1111,7 +1123,7 @@ namespace hex::ui {
             if (!chunkOpen) {
                 continue;
             }
-            
+
             int id = 1;
             iterable.forEachEntry(i, endIndex, [&](u64, auto *entry){
                 ImGui::PushID(id);
@@ -1139,7 +1151,7 @@ namespace hex::ui {
     }
 
     bool PatternDrawer::sortPatterns(const ImGuiTableSortSpecs* sortSpecs, const pl::ptrn::Pattern * left, const pl::ptrn::Pattern * right) const {
-        auto result = std::strong_ordering::less;
+        auto result = std::strong_ordering::equal;
 
         if (sortSpecs->Specs->ColumnUserID == ImGui::GetID("name")) {
             result = this->getDisplayName(*left) <=> this->getDisplayName(*right);
@@ -1166,7 +1178,7 @@ namespace hex::ui {
         if (!ImGui::BeginTable("##Patterntable", 9, ImGuiTableFlags_Borders | ImGuiTableFlags_Resizable | ImGuiTableFlags_Sortable | ImGuiTableFlags_Hideable | ImGuiTableFlags_Reorderable | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, height))) {
             return false;
         }
-    
+
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableSetupColumn("hex.ui.pattern_drawer.favorites"_lang, ImGuiTableColumnFlags_NoHeaderLabel | ImGuiTableColumnFlags_NoSort | ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize | ImGuiTableColumnFlags_NoReorder | ImGuiTableColumnFlags_IndentDisable | (m_favorites.empty() ? ImGuiTableColumnFlags_None : ImGuiTableColumnFlags_NoHide), ImGui::GetTextLineHeight(), ImGui::GetID("favorite"));
         ImGui::TableSetupColumn("hex.ui.pattern_drawer.var_name"_lang,  ImGuiTableColumnFlags_PreferSortAscending | ImGuiTableColumnFlags_NoHide | ImGuiTableColumnFlags_IndentEnable, 0, ImGui::GetID("name"));
@@ -1318,6 +1330,7 @@ namespace hex::ui {
         if (beginPatternTable(patterns, m_sortedPatterns, height)) {
             ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImGui::GetColorU32(ImGuiCol_HeaderHovered, 0.4F));
             ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImGui::GetColorU32(ImGuiCol_HeaderActive, 0.4F));
+            ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, ImGui::CalcTextSize(" ").x * 2);
             ImGui::TableHeadersRow();
 
             m_showFavoriteStars = false;
@@ -1388,6 +1401,7 @@ namespace hex::ui {
                 }
             }
 
+            ImGui::PopStyleVar();
             ImGui::PopStyleColor(2);
 
             ImGui::EndTable();
@@ -1413,7 +1427,7 @@ namespace hex::ui {
                             if (!arguments.empty()) {
                                 const auto &groupName = arguments.front().toString();
                                 if (!m_groups.contains(groupName))
-                                    m_groups.insert({ groupName, std::vector<std::unique_ptr<pl::ptrn::Pattern>>() });
+                                    m_groups.insert({ groupName, { } });
 
                                 m_groups[groupName].push_back(pattern->clone());
                             }

@@ -7,20 +7,17 @@
 #include <romfs/romfs.hpp>
 #include <font_atlas.hpp>
 #include <font_settings.hpp>
-#include <imgui_impl_opengl3.h>
-#include <fonts/fonts.hpp>
 
 namespace hex::fonts {
 
     void registerFonts();
 
-    bool buildFontAtlas(FontAtlas *fontAtlas, std::fs::path fontPath, bool pixelPerfectFont, float fontSize, bool loadUnicodeCharacters, bool bold, bool italic, bool antialias);
+    bool buildFontAtlas(FontAtlas *fontAtlas, std::fs::path fontPath, bool pixelPerfectFont, float fontSize, bool loadUnicodeCharacters, bool bold, bool italic,const std::string &antialias);
 
     static AutoReset<std::map<UnlocalizedString, std::unique_ptr<FontAtlas>>> s_fontAtlases;
 
     void loadFont(const ContentRegistry::Settings::Widgets::Widget &widget, const UnlocalizedString &name, ImFont **font, float scale) {
         const auto &settings = static_cast<const FontSelector&>(widget);
-
         auto atlas = std::make_unique<FontAtlas>();
 
         const bool atlasBuilt = buildFontAtlas(
@@ -31,7 +28,7 @@ namespace hex::fonts {
             true,
             settings.isBold(),
             settings.isItalic(),
-            settings.isAntiAliased()
+            settings.antiAliasingType()
         );
 
         if (!atlasBuilt) {
@@ -43,7 +40,7 @@ namespace hex::fonts {
                 false,
                 settings.isBold(),
                 settings.isItalic(),
-                settings.isAntiAliased()
+                settings.antiAliasingType()
             );
 
             log::error("Failed to load font {}! Reverting back to default font!", name.get());
@@ -78,7 +75,6 @@ namespace hex::fonts {
 
         return true;
     }
-
 }
 
 IMHEX_LIBRARY_SETUP("Fonts") {
@@ -90,6 +86,5 @@ IMHEX_LIBRARY_SETUP("Fonts") {
     hex::ImHexApi::Fonts::registerFont("hex.fonts.font.hex_editor");
     hex::ImHexApi::Fonts::registerFont("hex.fonts.font.code_editor");
 
-    hex::ImHexApi::System::addStartupTask("Loading fonts", true, hex::fonts::setupFonts);
     hex::fonts::registerFonts();
 }

@@ -97,6 +97,7 @@ namespace hex::plugin::visualizers {
 
         AutoReset<ImGuiExt::Texture> s_texture;
         std::fs::path s_texturePath;
+        std::string s_errorMessage="";
 
         u32 s_vertexCount;
 
@@ -602,8 +603,15 @@ namespace hex::plugin::visualizers {
 
             // Draw more settings
             if (ImGui::CollapsingHeader("hex.visualizers.pl_visualizer.3d.more_settings"_lang)) {
-                if (ImGuiExt::InputFilePicker("hex.visualizers.pl_visualizer.3d.texture_file"_lang, s_texturePath, {}))
+                if (ImGuiExt::InputFilePicker("hex.visualizers.pl_visualizer.3d.texture_file"_lang, s_texturePath, {}) ||  ImGui::IsItemDeactivatedAfterEdit())
                     s_shouldUpdateTexture = true;
+            }
+            if (s_errorMessage != "") {
+                auto color = ImGui::GetColorU32(ImVec4(1.0F, 0.0F, 0.0F, 1.0F));
+                ImGui::PushStyleColor(ImGuiCol_Text,color);
+                ImGui::TextUnformatted(s_errorMessage.c_str());
+                ImGui::PopStyleColor();
+                return;
             }
         }
 
@@ -798,13 +806,22 @@ namespace hex::plugin::visualizers {
                 shader.setUniform("lightColor",       s_lightColor);
 
                 vertexArray.bind();
-                if (s_shouldUpdateTexture) {
+                if (s_shouldUpdateTexture && !s_texturePath.empty()) {
                     s_shouldUpdateTexture = false;
-                    s_modelTexture = ImGuiExt::Texture::fromImage(s_texturePath, ImGuiExt::Texture::Filter::Nearest);
-                    if (s_modelTexture.isValid()) {
-                        s_drawTexture = true;
-                    }
-                }
+                    AutoReset<ImGuiExt::Texture> tempTexture = ImGuiExt::Texture::fromImage(s_texturePath, ImGuiExt::Texture::Filter::Nearest);
+                    if (tempTexture.isValid()) {
+                        const ImGuiExt::Texture &modelTexture = tempTexture.operator*();
+                        if (modelTexture.isValid()) {
+                            s_modelTexture = std::move(tempTexture.operator*());
+                            s_drawTexture = true;
+                            s_errorMessage = "";
+                        } else
+                            s_errorMessage = "hex.visualizers.pl_visualizer.3d.error_message_invalid_texture_file"_lang.get();
+                    } else
+                        s_errorMessage = "hex.visualizers.pl_visualizer.3d.error_message_invalid_texture_file"_lang.get();
+
+                } else if (s_texturePath.empty())
+                    s_errorMessage = "";
 
                 if (s_drawTexture)
                     glBindTexture(GL_TEXTURE_2D, *s_modelTexture);
@@ -914,8 +931,11 @@ namespace hex::plugin::visualizers {
                 }
             }
         }
-
-        s_texturePath = textureFile;
+        if (!textureFile.empty() && s_texturePath.empty()) {
+            s_texturePath = textureFile;
+            s_shouldUpdateTexture = true;
+        } else if (!s_texturePath.empty())
+            textureFile = s_texturePath.string();
         s_drawTexture = !textureFile.empty();
         if (shouldReset)
             s_shouldReset = true;
@@ -923,7 +943,13 @@ namespace hex::plugin::visualizers {
 
         auto *iterable = dynamic_cast<pl::ptrn::IIterable*>(indicesPattern.get());
         if (iterable != nullptr && iterable->getEntryCount() > 0) {
-            const auto &content = iterable->getEntry(0);
+            auto content = iterable->getEntry(0);
+            while (content->getSize() == 0) {
+                auto children = content->getChildren();
+                if (children.size() == 0)
+                    throw std::runtime_error("hex.visualizers.pl_visualizer.3d.error_message_invalid_index_pattern"_lang.get());
+                content = static_cast<const std::shared_ptr<pl::ptrn::Pattern>>(children.begin()->second);
+            }
             if (content->getSize() == 1) {
                 s_indexType = IndexType::U8;
                 processRendering<u8>(verticesPattern, indicesPattern, normalsPattern, colorsPattern, uvPattern);

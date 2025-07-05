@@ -102,6 +102,9 @@ namespace hex {
 
             static PerProvider<std::optional<Region>> s_hoveredRegion;
             void setHoveredRegion(const prv::Provider *provider, const Region &region) {
+                if (provider == nullptr)
+                    return;
+                
                 if (region == Region::Invalid())
                     s_hoveredRegion.get(provider).reset();
                 else
@@ -1065,7 +1068,7 @@ namespace hex {
             };
         }
 
-        void loadFont(const std::fs::path &path, const std::vector<GlyphRange> &glyphRanges, Offset offset, u32 flags, std::optional<u32> defaultSize) {
+        void loadFont(const std::fs::path &path, const std::vector<GlyphRange> &glyphRanges, Offset offset, u32 flags, std::optional<bool> scalable, std::optional<u32> defaultSize) {
             wolv::io::File fontFile(path, wolv::io::File::Mode::Read);
             if (!fontFile.isValid()) {
                 log::error("Failed to load font from file '{}'", wolv::util::toUTF8String(path));
@@ -1078,17 +1081,19 @@ namespace hex {
                 glyphRanges,
                 offset,
                 flags,
+                scalable,
                 defaultSize
             });
         }
 
-        void loadFont(const std::string &name, const std::span<const u8> &data, const std::vector<GlyphRange> &glyphRanges, Offset offset, u32 flags, std::optional<u32> defaultSize) {
+        void loadFont(const std::string &name, const std::span<const u8> &data, const std::vector<GlyphRange> &glyphRanges, Offset offset, u32 flags, std::optional<bool> scalable, std::optional<u32> defaultSize) {
             impl::s_fonts->emplace_back(Font {
                 name,
                 { data.begin(), data.end() },
                 glyphRanges,
                 offset,
                 flags,
+                scalable,
                 defaultSize
             });
         }
@@ -1117,6 +1122,18 @@ namespace hex {
             return impl::s_italicFont;
         }
 
+        float getDpi() {
+            auto dpi = ImGui::GetCurrentContext()->CurrentDpiScale * 96.0F;
+            return dpi ? dpi : 96.0F;
+        }
+
+        float pixelsToPoints(float pixels) {
+            return pixels * (72.0 / getDpi());
+        }
+
+        float pointsToPixels(float points) {
+            return points / (72.0 / getDpi());
+        }
 
     }
 
